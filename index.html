@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>💪 Seu Treino do Dia</title>
+    <style>
+        :root{
+            --bg:#f4f4f9; --card:#fff; --muted:#7f8c8d; --accent:#e74c3c; --shadow: 0 6px 24px rgba(44,62,80,0.08);
+        }
+        html,body{height:100%;}
+        body {
+            font-family: Inter, 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0; padding: 20px; background-color: var(--bg); color: #222;
+            display:flex; align-items:flex-start; justify-content:center;
+        }
+        .container{
+            width:100%; max-width:820px; background:var(--card); border-radius:12px; padding:24px;
+            box-shadow:var(--shadow); box-sizing:border-box;
+        }
+        header{display:flex;align-items:center;justify-content:space-between;gap:12px}
+        .dia-semana{font-size:0.95rem;color:var(--muted)}
+        h1{margin:0;font-size:1.4rem;color:#2c3e50}
+        h2{color:var(--accent);margin:18px 0 12px;padding-bottom:6px;border-bottom:2px solid rgba(231,76,60,0.08);font-size:1.05rem}
+        .meta{font-size:0.9rem;color:var(--muted);}
+        ul{list-style:none;padding:0;margin:0}
+        li{display:flex;align-items:center;gap:10px;background:#f6f8f9;margin:8px 0;padding:10px;border-radius:8px}
+        li:focus-within{outline:2px solid rgba(231,76,60,0.12)}
+        input[type="checkbox"]{transform:scale(1.15);width:18px;height:18px}
+        .controls{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+        button, .btn{background:var(--accent);color:#fff;border:none;padding:8px 12px;border-radius:8px;cursor:pointer}
+        button.secondary{background:#bdc3c7;color:#1b2428}
+        .edit-row{display:flex;gap:8px;margin-top:12px}
+        input[type="text"].add-input{flex:1;padding:8px;border-radius:8px;border:1px solid #e6e9eb}
+
+        /* Responsive */
+        @media (max-width:600px){
+            .container{padding:16px}
+            h1{font-size:1.1rem}
+            h2{font-size:1rem}
+            li{padding:10px}
+        }
+    </style>
+</head>
+<body>
+    <div class="container" role="main">
+        <header>
+            <div>
+                <div class="dia-semana" id="dia-semana" aria-live="polite"></div>
+                <h1>🎯 Treino de Hoje</h1>
+                <div class="meta" id="treino-meta"></div>
+            </div>
+            <div style="text-align:right">
+                <div style="font-size:0.85rem;color:var(--muted)">Salvando localmente</div>
+            </div>
+        </header>
+
+        <div id="treino-do-dia" aria-labelledby="treino-title">
+            <p>Carregando...</p>
+        </div>
+
+        <div class="controls" style="margin-top:16px">
+            <button id="reset-checks" class="secondary">Limpar Checklists</button>
+            <button id="reset-custom" class="secondary">Restaurar Treinos Padrão</button>
+            <button id="export" class="secondary">Exportar Dados</button>
+            <button id="import" class="secondary">Importar Dados</button>
+            <input id="import-file" type="file" accept="application/json" style="display:none" />
+        </div>
+
+        <div class="edit-row" style="margin-top:14px">
+            <input id="new-ex" class="add-input" type="text" placeholder="Adicionar exercício ao treino de hoje" aria-label="Adicionar exercício">
+            <button id="add-ex">Adicionar</button>
+            <button id="save-template" class="secondary">Salvar como template</button>
+        </div>
+    </div>
+
+    <script>
+        // --------------------------
+        // Helpers
+        // --------------------------
+        const slugify = (str) => {
+            return String(str)
+              .normalize('NFD')
+              .replace(/\p{Diacritic}/gu, '')
+              .toLowerCase()
+              .replace(/[^a-z0-9]+/g,'-')
+              .replace(/(^-|-$)/g,'');
+        };
+
+        const todayKey = () => {
+            const d = new Date();
+            return d.toISOString().slice(0,10); // YYYY-MM-DD
+        }
+
+        const LS = {
+            get(key){ try { return JSON.parse(localStorage.getItem(key)); } catch(e){return null} },
+            set(key,val){ localStorage.setItem(key, JSON.stringify(val)); }
+        };
+
+        // --------------------------
+        // Treinos (editable via UI & persisted per template key)
+        // --------------------------
+        const defaultTreinos = {
+            diasDaSemana: ["Domingo","Segunda-feira","Terça-feira","Quarta-feira","Quinta-feira","Sexta-feira","Sábado"],
+            FORCA_A:{titulo:"FORÇA: Peito & Tríceps (Push)",tipo:"Musculação/Academia",exercicios:["Supino Inclinado com Halteres (3x10)","Supino Reto na Máquina (3x12)","Desenvolvimento com Halteres (3x10)","Elevação Lateral (3x15)","Extensão de Tríceps com Haltere (3x12)","Tríceps Corda no Pulley (3x15)"]},
+            FORCA_B:{titulo:"FORÇA: Costas & Bíceps (Pull)",tipo:"Musculação/Academia",exercicios:["Puxada Alta (3x10)","Remada Curvada com Barra (3x10)","Remada Cavalinho (3x12)","Rosca Direta com Barra (3x10)","Rosca Martelo (3x12)","Abdômen (3x falha)"]},
+            FORCA_C:{titulo:"FORÇA: Pernas & Ombros Posterior",tipo:"Musculação/Academia",exercicios:["Agachamento Livre (4x10)","Leg Press 45º (3x12)","Extensora (3x15)","Mesa Flexora (3x12)","Panturrilha (3x20)","Crucifixo Invertido (3x15)"]},
+            CARDIO_A:{titulo:"CARDIO: Corrida na Rua/Esteira",tipo:"Aeróbico",exercicios:["Aquecimento (5 min caminhada)","Corrida Moderada (30 min)","Sprint (10x 30s forte / 30s leve)","Desaquecimento e Alongamento (5 min)"]},
+            CARDIO_B:{titulo:"CARDIO: Bicicleta/Elíptico + HIIT",tipo:"Aeróbico/Metabólico",exercicios:["Bicicleta/Elíptico (20 min constante)","HIIT: Burpee (3x 1 min)","HIIT: Pular Corda (3x 1 min)","Abdomen infra (3x falha)"]},
+            FDS:{titulo:"FIM DE SEMANA: Básico em Casa",tipo:"Core & Mobilidade",exercicios:["Alongamento Completo (10 min)","Flexões (3x Máximo)","Abdominais (3x Máximo)","Agachamento Livre (3x20)"]}
+        };
+
+        const customKey = 'treinos-custom-v1';
+        const checksKeyPrefix = 'treino-checks-';
+
+        const getTreinos = () => {
+            const custom = LS.get(customKey) || {};
+            return Object.assign({}, defaultTreinos, custom);
+        };
+
+        // --------------------------
+        // Logic: determine today's treino key
+        // --------------------------
+        function getTreinoDoDiaKey(date = new Date()){
+            const diaIndex = date.getDay();
+            if (diaIndex === 0 || diaIndex === 6) return 'FDS';
+            const diaSemana = diaIndex - 1; // 0=Seg ... 4=Sex
+            if (diaSemana % 2 === 0) { // força days 0,2,4 -> FORCA_A/B/C
+                return ['FORCA_A','FORCA_B','FORCA_C'][diaSemana/2];
+            } else {
+                return ['CARDIO_A','CARDIO_B'][(diaSemana-1)/2];
+            }
+        }
+
+        function getTreinoDoDia(){
+            const treinos = getTreinos();
+            const key = getTreinoDoDiaKey();
+            return { key, treino: treinos[key] };
+        }
+
+        // --------------------------
+        // Persistence: checks by date
+        // --------------------------
+        function getChecksForToday(){
+            return LS.get(checksKeyPrefix + todayKey()) || {};
+        }
+
+        function saveCheck(id, checked){
+            const k = checksKeyPrefix + todayKey();
+            const current = LS.get(k) || {};
+            if (checked) current[id] = true; else delete current[id];
+            LS.set(k, current);
+        }
+
+        function clearChecks(){ LS.set(checksKeyPrefix + todayKey(), {}); renderizarTreino(); }
+
+        // --------------------------
+        // Render
+        // --------------------------
+        function renderizarTreino(){
+            const { key, treino } = getTreinoDoDia();
+            const treinos = getTreinos();
+            const dataAtual = new Date();
+            const diaIndex = dataAtual.getDay();
+            const container = document.getElementById('treino-do-dia');
+            const diaSemanaEl = document.getElementById('dia-semana');
+            const meta = document.getElementById('treino-meta');
+
+            diaSemanaEl.textContent = treinos.diasDaSemana[diaIndex].toUpperCase();
+            meta.textContent = `${treino.tipo} · Template: ${key}`;
+
+            let html = `<h2 id="treino-title">${treino.titulo} <small style="font-size:0.85rem; color:var(--muted)">(${treino.tipo})</small></h2>`;
+            html += '<ul role="list" aria-labelledby="treino-title">';
+
+            const checks = getChecksForToday();
+
+            treino.exercicios.forEach((ex,i) => {
+                const baseId = slugify(ex) || 'ex-' + i;
+                const id = `${baseId}-${i}`; // ensure unique
+                const checked = !!checks[id];
+
+                html += `\n<li>
+                    <input type="checkbox" id="${id}" data-ex="${encodeURIComponent(ex)}" ${checked? 'checked':''} aria-label="Marcar ${ex}">
+                    <label for="${id}">${ex}</label>
+                </li>`;
+            });
+
+            html += '</ul>';
+            container.innerHTML = html;
+
+            // Attach listeners
+            container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+                cb.addEventListener('change', (e)=>{
+                    saveCheck(cb.id, cb.checked);
+                });
+            });
+        }
+
+        // --------------------------
+        // Edit / Save Template UI
+        // --------------------------
+        document.getElementById('add-ex').addEventListener('click', ()=>{
+            const val = document.getElementById('new-ex').value.trim();
+            if (!val) return;
+            const {key, treino} = getTreinoDoDia();
+            const treinos = getTreinos();
+            // update custom copy
+            const custom = LS.get(customKey) || {};
+            custom[key] = custom[key] || Object.assign({}, treinos[key]);
+            custom[key].exercicios = custom[key].exercicios.concat([val]);
+            LS.set(customKey, custom);
+            document.getElementById('new-ex').value = '';
+            renderizarTreino();
+        });
+
+        document.getElementById('save-template').addEventListener('click', ()=>{
+            const {key} = getTreinoDoDia();
+            const treinos = getTreinos();
+            const current = treinos[key];
+            const custom = LS.get(customKey) || {};
+            custom[key] = Object.assign({}, current);
+            LS.set(customKey, custom);
+            alert('Template salvo localmente.');
+        });
+
+        document.getElementById('reset-checks').addEventListener('click', ()=>{
+            if(confirm('Limpar checklist de hoje?')){ clearChecks(); }
+        });
+
+        document.getElementById('reset-custom').addEventListener('click', ()=>{
+            if(confirm('Restaurar treinos para os padrões? (remover alterações locais)')){
+                localStorage.removeItem(customKey);
+                renderizarTreino();
+            }
+        });
+
+        document.getElementById('export').addEventListener('click', ()=>{
+            const exportData = {
+                date: todayKey(),
+                checks: LS.get(checksKeyPrefix + todayKey()) || {},
+                custom: LS.get(customKey) || {}
+            };
+            const text = JSON.stringify(exportData, null, 2);
+            const blob = new Blob([text], {type:'application/json'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = `treino-export-${todayKey()}.json`; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+        });
+
+        // Import flow: open file picker and process JSON
+        document.getElementById('import').addEventListener('click', ()=>{
+            document.getElementById('import-file').click();
+        });
+
+        document.getElementById('import-file').addEventListener('change', (e)=>{
+            const file = e.target.files && e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(ev){
+                try{
+                    const data = JSON.parse(ev.target.result);
+                    // Basic validation
+                    if (!data || (typeof data !== 'object')) throw new Error('Arquivo inválido');
+
+                    const apply = () => {
+                        if (data.checks) LS.set(checksKeyPrefix + (data.date || todayKey()), data.checks);
+                        if (data.custom) LS.set(customKey, data.custom);
+                        renderizarTreino();
+                        alert('Importação concluída.');
+                    };
+
+                    if (confirm('Importar dados selecionados (substitui dados locais)?')){
+                        apply();
+                    }
+                }catch(err){
+                    alert('Falha ao importar: ' + (err.message || err));
+                }
+            };
+            reader.readAsText(file);
+            // reset input so same file can be re-selected later
+            e.target.value = '';
+        });
+
+        // Initial render
+        document.addEventListener('DOMContentLoaded', renderizarTreino);
+    </script>
+</body>
+</html>
